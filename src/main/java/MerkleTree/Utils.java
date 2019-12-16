@@ -1,6 +1,7 @@
 package MerkleTree;
 
 import java.util.Arrays;
+import java.security.MessageDigest;
 
 public class Utils {
 	public static String byteToHex(byte num) {
@@ -17,6 +18,22 @@ public class Utils {
 			hexStringBuffer.append(byteToHex(byteArray[i]));
 		}
 		return hexStringBuffer.toString();
+	}
+
+	public static byte[] hash(byte[] val) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			return digest.digest(val);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return null;
+	}
+
+	public static byte[] concat(byte[] first, byte[] second) {
+		byte[] concat = Arrays.copyOf(first, first.length + second.length);
+		System.arraycopy(second, 0, concat, first.length, second.length);
+		return concat;
 	}
 }
 

@@ -3,31 +3,57 @@
  */
 package MerkleTree;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.nio.file.*;
+import java.rmi.*;
 import java.util.stream.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 public class App {
+
+	static int port = 12345;
+
 	public String getGreeting() {
 		return "Hello world.";
 	}
 
-	public static void main(String[] args) {
+	public static void main(String[] args) throws Exception {
 
-		String test = "hello\nhow\nare\nyou\n???\nblabla\ntoto\nlast";
+		if (args[0].equals("server"))
+			runServer(args[1]);
+		else if (args[0].equals("client"))
+			runClient(args[1]);
 
-		List<byte[]> bytelist = new ArrayList<>();
-		String[] strings = test.split("\n");
-		for (String s : strings) {
-			bytelist.add(s.getBytes());
+	}
+
+	private static void runClient(String arg) {
+		try {
+			LogServerInterface server = (LogServerInterface) Naming
+					.lookup(String.format("rmi://localhost:%d/logServer", port));
+
+			Auditor auditor = new Auditor(server);
+
+			if (auditor.isMember(arg))
+				System.out.printf("The string %s is in the logs.", arg);
+			else
+				System.out.printf("The string %s is not in the logs.", arg);
+
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
-		MerkleTree treetest = new MerkleTree(bytelist);
-		treetest.exportTreeViz("/home/mpostma/Documents/cours-a3/distributed_programming/tp/tp4/test.dot");
-		System.out.println(treetest.getProof(6).stream().map((byte[] hash) -> Utils.encodeHexString(hash, 5))
-				.collect(Collectors.toList()));
-		// MerkleTree subtreetest = MerkleTree.build(subtest);
-		// List<MerkleTree> proof = treetest.proof(subtreetest);
-		// System.out.println(proof);
+	}
 
+	private static void runServer(String logPath) throws Exception {
+
+		String log = new String(Files.readAllBytes(Paths.get(logPath)));
+		LogServer server = new LogServer(log);
+		server.merkleTree.exportTreeViz(
+				"/home/marin/Documents/cours-a3/distributed_programming/tp/tp4/test.dot");
+
+		java.rmi.registry.LocateRegistry.createRegistry(port);
+
+		Naming.rebind(String.format("rmi://localhost:%d/logServer", port), server);
+		System.out.printf("Server started on port: %d\n", port);
 	}
 }

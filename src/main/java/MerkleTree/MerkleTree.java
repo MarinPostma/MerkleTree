@@ -1,11 +1,9 @@
 package MerkleTree;
 
-import java.util.Arrays;
-import java.util.HashMap;
+import java.util.Collections;
 import java.io.File;
 import java.io.IOException;
 import java.io.FileOutputStream;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Stack;
@@ -14,8 +12,8 @@ import java.io.OutputStream;
 public class MerkleTree {
 
 	TreeElement root;
-	HashMap<String, TreeElement> memmap;
 	List<TreeElement> leaves;
+	int size;
 
 	interface TreeElement {
 		public int getStart();
@@ -39,11 +37,16 @@ public class MerkleTree {
 		int start, end;
 
 		public Node(TreeElement left, TreeElement right) {
-			this.hash = hash(concat(concat(new byte[] { 0x01 }, left.getHash()), right.getHash()));
 			this.left = left;
 			this.right = right;
 			this.start = Math.min(right.getStart(), left.getStart());
 			this.end = Math.max(right.getEnd(), left.getEnd());
+			updateHash();
+		}
+
+		public void updateHash() {
+			this.hash = Utils.hash(Utils.concat(Utils.concat(new byte[] { 0x01 }, left.getHash()),
+					right.getHash()));
 		}
 
 		public byte[] getHash() {
@@ -77,8 +80,8 @@ public class MerkleTree {
 		byte[] hash;
 		int index;
 
-		public Leaf(byte[] hash, int index) {
-			this.hash = hash;
+		public Leaf(byte[] val, int index) {
+			this.hash = Utils.hash(Utils.concat(new byte[] { 0x00 }, val));
 			this.index = index;
 		}
 
@@ -102,6 +105,10 @@ public class MerkleTree {
 			return String.format("%d", this.index);
 		}
 
+		public void setValue(byte[] val) {
+			this.hash = Utils.hash(Utils.concat(new byte[] { 0x00 }, val));
+		}
+
 		@Override
 		public String toString() {
 			String hash = Utils.encodeHexString(this.getHash(), 5);
@@ -110,20 +117,49 @@ public class MerkleTree {
 	}
 
 	public MerkleTree(List<byte[]> items) {
-		this.memmap = new HashMap<>();
 		List<TreeElement> leaves = new ArrayList<>();
 		for (int i = 0; i < items.size(); i++) {
-			leaves.add(new Leaf(hash(items.get(i)), i));
+			leaves.add(new Leaf(items.get(i), i));
 		}
+		// pad the tree with empty nodes
+		int next_pow = (int) Math.pow(2, (int) Math.ceil(Math.log((double) items.size()) / Math.log(2.0)));
+
+		for (int i = items.size(); i < next_pow; i++) {
+			leaves.add(new Leaf(new byte[] { 0x00 }, i));
+		}
+		this.size = items.size();
 		this.leaves = leaves;
 		this.root = build(leaves);
 
 	}
 
 	public void append(byte[] content) {
-		Leaf newLeaf = new Leaf(content, this.leaves.size());
-		this.leaves.add((TreeElement) newLeaf);
-		this.root = build(this.leaves);
+		// check if enough capacity
+		this.size++;
+		if (this.size > this.leaves.size()) {
+			int next_pow = (int) Math.pow(2, (int) Math.ceil(Math.log((double) this.size) / Math.log(2.0)));
+			for (int i = this.size; i < next_pow; i++) {
+				this.leaves.add(new Leaf(new byte[] { 0x00 }, i));
+			}
+			this.root = build(this.leaves);
+		}
+		TreeElement nl = this.leaves.get(this.size - 1);
+		((Leaf) nl).setValue(content);
+		// update path to new appended node
+		Stack<TreeElement> path = new Stack<>();
+		path.push(this.root);
+		while (true) {
+			Node current = (Node) path.peek();
+			if (current.left.equals(nl) || current.right.equals(nl))
+				break;
+			if (nl.getStart() >= current.right.getStart())
+				path.push(current.right);
+			else
+				path.push(current.left);
+		}
+
+		while (!path.isEmpty())
+			((Node) path.pop()).updateHash();
 	}
 
 	public void exportTreeViz(String path) {
@@ -170,18 +206,20 @@ public class MerkleTree {
 			return null;
 
 		TreeElement current = this.root;
-		path.add(current.getHash());
 		while (current.getType() != TreeElementType.LEAF) {
 
 			Node currentNode = ((Node) current);
 
 			if (index >= currentNode.right.getStart()) {
+				path.add(currentNode.left.getHash());
 				current = currentNode.right;
 			} else {
+				path.add(currentNode.right.getHash());
 				current = currentNode.left;
 			}
-			path.add(current.getHash());
 		}
+		// apparently we want it in reverse order...
+		Collections.reverse(path);
 		return path;
 	}
 
@@ -213,58 +251,19 @@ public class MerkleTree {
 		return proof;
 	}
 
-	private byte[] concat(byte[] first, byte[] second) {
-		byte[] concat = Arrays.copyOf(first, first.length + second.length);
-		System.arraycopy(second, 0, concat, first.length, second.length);
-		return concat;
-	}
-
-	private static byte[] hash(byte[] val) {
-		try {
-			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			return digest.digest(val);
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
-		return null;
-	}
-
 	private TreeElement build(List<TreeElement> leaves) {
-		List<TreeElement> left = leaves.subList(0, leaves.size() / 2);
-		List<TreeElement> right = leaves.subList(leaves.size() / 2, leaves.size());
-		if (left.size() == 0 && right.size() == 0) {
+		int half = leaves.size() % 2 == 0 ? leaves.size() / 2 : leaves.size() / 2 + 1;
+		List<TreeElement> left = leaves.subList(0, half);
+		List<TreeElement> right = leaves.subList(half, leaves.size());
+		if (left.size() == 0 && right.size() == 0)
 			return null;
-		} else if (left.size() == 0 && right.size() == 1) {
+		else if (left.size() == 0 && right.size() == 1)
 			return right.get(0);
-		} else if (left.size() == 1 && right.size() == 0) {
+		else if (left.size() == 1 && right.size() == 0)
 			return left.get(0);
-		} else {
-			TreeElement rightNode = null;
-			TreeElement leftNode = null;
+		else
+			return new Node(build(left), build(right));
 
-			String rightKey = String.format("%d%d", right.get(0).getStart(),
-					right.get(right.size() - 1).getEnd());
-			String leftKey = String.format("%d%d", left.get(0).getStart(),
-					left.get(left.size() - 1).getEnd());
-
-			if (this.memmap.containsKey(rightKey)) {
-				rightNode = this.memmap.get(rightKey);
-			} else {
-				// bad practice in java, but meh...
-				rightNode = build(right);
-				// we should clean unused values in the map at some point, but this is for sake
-				// of demonstration.
-				this.memmap.put(rightKey, rightNode);
-			}
-
-			if (this.memmap.containsKey(leftKey)) {
-				leftNode = this.memmap.get(leftKey);
-			} else {
-				leftNode = build(left);
-				this.memmap.put(leftKey, leftNode);
-			}
-			return new Node(leftNode, rightNode);
-		}
 	}
 
 	@Override
